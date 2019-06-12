@@ -16,7 +16,8 @@
  */
 package com.github.adamantcheese.chan.core.cache;
 
-import java.io.File;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamViewCreator;
 
 public abstract class FileCacheListener {
     public void onProgress(long downloaded, long total) {
@@ -25,7 +26,7 @@ public abstract class FileCacheListener {
     /**
      * Called when the file download was completed.
      */
-    public void onSuccess(File file) {
+    public void onSuccess(RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
     }
 
     /**
@@ -35,12 +36,6 @@ public abstract class FileCacheListener {
      * @param notFound when it was a http 404 error.
      */
     public void onFail(boolean notFound) {
-    }
-
-    /**
-     * Called just before the file is purged, after being cancelled.
-     */
-    public void beforePurgeOutput(File file) {
     }
 
     /**

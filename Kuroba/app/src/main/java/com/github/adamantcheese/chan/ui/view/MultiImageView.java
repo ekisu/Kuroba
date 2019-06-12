@@ -20,6 +20,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
+import android.net.Uri;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
@@ -39,9 +40,14 @@ import com.davemorrissey.labs.subscaleview.ImageSource;
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView;
 import com.github.adamantcheese.chan.R;
 import com.github.adamantcheese.chan.StartActivity;
+import com.github.adamantcheese.chan.core.cache.ExhaustiveRandomAccessStreamReader;
 import com.github.adamantcheese.chan.core.cache.FileCache;
-import com.github.adamantcheese.chan.core.cache.FileCacheDownloader;
+import com.github.adamantcheese.chan.core.cache.FileCacheDataSource;
 import com.github.adamantcheese.chan.core.cache.FileCacheListener;
+import com.github.adamantcheese.chan.core.cache.streams.CacheBackedRandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamViewCreator;
+import com.github.adamantcheese.chan.core.cache.streams.adaptors.RandomAccessStreamToInputStreamAdaptor;
 import com.github.adamantcheese.chan.core.model.PostImage;
 import com.github.adamantcheese.chan.core.settings.ChanSettings;
 import com.github.adamantcheese.chan.utils.AndroidUtils;
@@ -51,12 +57,12 @@ import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.audio.AudioListener;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.ProgressiveMediaSource;
 import com.google.android.exoplayer2.ui.PlayerView;
-import com.google.android.exoplayer2.upstream.DataSource;
 
+import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.util.RandomAccess;
 
 import javax.inject.Inject;
 
@@ -88,12 +94,13 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
 
     private boolean hasContent = false;
     private ImageContainer thumbnailRequest;
-    private FileCacheDownloader bigImageRequest;
-    private FileCacheDownloader gifRequest;
-    private FileCacheDownloader videoRequest;
+    private ExhaustiveRandomAccessStreamReader bigImageRequest;
+    private ExhaustiveRandomAccessStreamReader gifRequest;
+    private ExhaustiveRandomAccessStreamReader videoRequest;
 
     private SimpleExoPlayer exoPlayer;
     private boolean mediaSourceCancel = false;
+    private FileCacheDataSource videoDataSource;
 
     private boolean backgroundToggle;
 
@@ -234,6 +241,11 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
             exoPlayer = null;
         }
 
+        if (videoDataSource != null) {
+            videoDataSource.closeStream();
+            videoDataSource = null;
+        }
+
         if (context instanceof StartActivity) {
             ((StartActivity) context).getLifecycle().removeObserver(this);
         }
@@ -299,8 +311,10 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
             }
 
             @Override
-            public void onSuccess(File file) {
-                setBigImageFile(file);
+            public void onSuccess(RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
+                CacheBackedRandomAccessStream cacheStream = (CacheBackedRandomAccessStream) stream.getInnerStream();
+
+                setBigImageFile(cacheStream.getBackingFile());
             }
 
             @Override
@@ -342,9 +356,9 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
             }
 
             @Override
-            public void onSuccess(File file) {
+            public void onSuccess(RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
                 if (!hasContent || mode == Mode.GIF) {
-                    setGifFile(file);
+                    setGifStream(stream);
                 }
             }
 
@@ -365,17 +379,19 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
         });
     }
 
-    private void setGifFile(File file) {
+    private void setGifStream(RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
         GifDrawable drawable;
         try {
-            drawable = new GifDrawable(file.getAbsolutePath());
+            drawable = new GifDrawable(
+                    new BufferedInputStream(new RandomAccessStreamToInputStreamAdaptor(stream)));
 
             // For single frame gifs, use the scaling image instead
             // The region decoder doesn't work for gifs, so we unfortunately
             // have to use the more memory intensive non tiling mode.
             if (drawable.getNumberOfFrames() == 1) {
                 drawable.recycle();
-                setBitImageFileInternal(file, false, Mode.GIF);
+                CacheBackedRandomAccessStream cacheStream = (CacheBackedRandomAccessStream) stream.getInnerStream();
+                setBitImageFileInternal(cacheStream.getBackingFile(), false, Mode.GIF);
                 return;
             }
         } catch (IOException e) {
@@ -396,16 +412,14 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
     }
 
     private void setVideo(String videoUrl) {
-        if (ChanSettings.videoOpenExternal.get()) {
-            openVideoExternal(videoUrl);
-        } else {
-            openVideoInternalStream(videoUrl);
-        }
+        openVideoInternalStream(videoUrl);
     }
 
     private void openVideoInternalStream(String videoUrl) {
         try {
-            MediaSource mediaSource = fileCache.createMediaSource(videoUrl);
+            videoDataSource = fileCache.createDataSource(videoUrl);
+            MediaSource mediaSource = new ProgressiveMediaSource.Factory(() -> videoDataSource)
+                    .createMediaSource(Uri.parse(videoUrl));
 
             if (!hasContent || mode == Mode.MOVIE) {
                 PlayerView exoVideoView = new PlayerView(getContext());
@@ -427,48 +441,6 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
         } catch (IOException e) {
             Logger.e(TAG, "IOException", e);
         }
-    }
-
-    private void openVideoExternal(String videoUrl) {
-        if (videoRequest != null) {
-            return;
-        }
-
-        callback.showProgress(this, true);
-        videoRequest = fileCache.downloadFile(videoUrl, new FileCacheListener() {
-            @Override
-            public void onProgress(long downloaded, long total) {
-                callback.onProgress(MultiImageView.this, downloaded, total);
-            }
-
-            @Override
-            public void onSuccess(File file) {
-                if (!hasContent || mode == Mode.MOVIE) {
-                    Intent intent = new Intent(Intent.ACTION_VIEW);
-                    intent.setDataAndType(FileProvider.getUriForFile(getAppContext(), getAppContext().getPackageName() + ".fileprovider", file), "video/*");
-                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-                    AndroidUtils.openIntent(intent);
-
-                    onModeLoaded(Mode.MOVIE, null);
-                }
-            }
-
-            @Override
-            public void onFail(boolean notFound) {
-                if (notFound) {
-                    onNotFoundError();
-                } else {
-                    onError();
-                }
-            }
-
-            @Override
-            public void onEnd() {
-                videoRequest = null;
-                callback.showProgress(MultiImageView.this, false);
-            }
-        });
     }
 
     @Override

@@ -21,7 +21,7 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 
 import com.github.adamantcheese.chan.core.cache.FileCache;
-import com.github.adamantcheese.chan.core.cache.FileCacheDownloader;
+import com.github.adamantcheese.chan.core.cache.ExhaustiveRandomAccessStreamReader;
 import com.github.adamantcheese.chan.core.cache.FileCacheListener;
 import com.github.adamantcheese.chan.core.model.PostImage;
 import com.github.adamantcheese.chan.utils.AndroidUtils;
@@ -95,7 +95,7 @@ public class ImageSaveTask extends FileCacheListener implements Runnable {
                 // Manually call postFinished()
                 postFinished(success);
             } else {
-                FileCacheDownloader fileCacheDownloader =
+                ExhaustiveRandomAccessStreamReader fileCacheDownloader =
                         fileCache.downloadFile(postImage.imageUrl.toString(), this);
 
                 // If the fileCacheDownloader is null then the destination already existed and onSuccess() has been called.
@@ -112,14 +112,15 @@ public class ImageSaveTask extends FileCacheListener implements Runnable {
         }
     }
 
-    @Override
+    // TODO implement
+    /* @Override
     public void onSuccess(File file) {
         if (copyToDestination(file)) {
             onDestination();
         } else {
             deleteDestination();
         }
-    }
+    } */
 
     @Override
     public void onEnd() {

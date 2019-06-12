@@ -2,10 +2,13 @@ package com.github.adamantcheese.chan.utils;
 
 import android.util.Range;
 
+import java.io.IOException;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class RangeSet {
+public class RangeSet implements Serializable {
     private List<Range<Long>> ranges = new ArrayList<>();
 
     private boolean rangesAreContiguous(Range<Long> left, Range<Long> right) {
@@ -74,5 +77,26 @@ public class RangeSet {
         }
 
         return null;
+    }
+
+    private void writeObject(ObjectOutputStream stream) throws IOException {
+        ArrayList<Long> numbers = new ArrayList<>();
+        for (Range<Long> r : ranges) {
+            numbers.add(r.getLower());
+            numbers.add(r.getUpper());
+        }
+
+        stream.writeObject(numbers);
+    }
+
+    private void readObject(java.io.ObjectInputStream stream)
+            throws IOException, ClassNotFoundException {
+        ArrayList<Long> numbers = (ArrayList<Long>) stream.readObject();
+        ranges = new ArrayList<>();
+
+        int i = 0;
+        while (i < numbers.size()) {
+            ranges.add(new Range<>(numbers.get(i++), numbers.get(i++)));
+        }
     }
 }

@@ -1,6 +1,4 @@
-package com.github.adamantcheese.chan.core.cache;
-
-import com.github.adamantcheese.chan.utils.Logger;
+package com.github.adamantcheese.chan.core.cache.streams;
 
 import java.io.IOException;
 import java.util.ArrayDeque;

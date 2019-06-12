@@ -1,4 +1,4 @@
-package com.github.adamantcheese.chan.core.cache;
+package com.github.adamantcheese.chan.core.cache.streams;
 
 import java.io.IOException;
 

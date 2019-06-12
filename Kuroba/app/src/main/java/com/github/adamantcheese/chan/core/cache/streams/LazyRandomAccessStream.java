@@ -1,7 +1,6 @@
-package com.github.adamantcheese.chan.core.cache;
+package com.github.adamantcheese.chan.core.cache.streams;
 
 import java.io.IOException;
-import java.util.Random;
 
 public class LazyRandomAccessStream implements RandomAccessStream {
     public interface StreamFactory {

@@ -3,14 +3,18 @@ package com.github.adamantcheese.chan.core.cache;
 import androidx.annotation.AnyThread;
 import androidx.annotation.MainThread;
 
+import com.github.adamantcheese.chan.core.cache.streams.CacheBackedRandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStream;
 import com.github.adamantcheese.chan.utils.Logger;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.HashMap;
 
 public class PartialCacheHandler {
     private static final String TAG = "PartialCacheHandler";
+    // TODO enforce cache size, trimming, etc.
     private static final int TRIM_TRIES = 20;
     private static final long FILE_CACHE_DISK_SIZE = 100 * 1024 * 1024;
 
@@ -39,7 +43,7 @@ public class PartialCacheHandler {
 
     public CacheBackedRandomAccessStream getCacheBackedRandomAccessStream(
             String key, RandomAccessStream inputStream
-    ) {
+    ) throws IOException {
         createDirectories();
 
         try {

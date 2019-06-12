@@ -168,7 +168,8 @@ public class UpdateManager {
                 updateDownloadDialog.setProgress((int) (updateDownloadDialog.getMax() * (downloaded / (double) total)));
             }
 
-            @Override
+            // TODO implement
+            /* @Override
             public void onSuccess(File file) {
                 updateDownloadDialog.dismiss();
                 updateDownloadDialog = null;
@@ -186,7 +187,7 @@ public class UpdateManager {
                     return;
                 }
                 installApk(copy);
-            }
+            } */
 
             @Override
             public void onFail(boolean notFound) {

@@ -20,7 +20,7 @@ import android.net.ConnectivityManager;
 import androidx.viewpager.widget.ViewPager;
 
 import com.github.adamantcheese.chan.core.cache.FileCache;
-import com.github.adamantcheese.chan.core.cache.FileCacheDownloader;
+import com.github.adamantcheese.chan.core.cache.ExhaustiveRandomAccessStreamReader;
 import com.github.adamantcheese.chan.core.cache.FileCacheListener;
 import com.github.adamantcheese.chan.core.model.PostImage;
 import com.github.adamantcheese.chan.core.model.orm.Loadable;
@@ -52,7 +52,7 @@ public class ImageViewerPresenter implements MultiImageView.Callback, ViewPager.
     private int selectedPosition;
     private Loadable loadable;
 
-    private Set<FileCacheDownloader> preloadingImages = new HashSet<>();
+    private Set<ExhaustiveRandomAccessStreamReader> preloadingImages = new HashSet<>();
 
     // Disables swiping until the view pager is visible
     private boolean viewPagerVisible = false;
@@ -250,8 +250,8 @@ public class ImageViewerPresenter implements MultiImageView.Callback, ViewPager.
                 // If downloading, remove from preloadingImages if it finished.
                 // Array to allow access from within the callback (the callback should really
                 // pass the filecachedownloader itself).
-                final FileCacheDownloader[] preloadDownload =
-                        new FileCacheDownloader[1];
+                final ExhaustiveRandomAccessStreamReader[] preloadDownload =
+                        new ExhaustiveRandomAccessStreamReader[1];
                 preloadDownload[0] = fileCache.downloadFile(fileUrl,
                         new FileCacheListener() {
                             @Override
@@ -271,7 +271,7 @@ public class ImageViewerPresenter implements MultiImageView.Callback, ViewPager.
     }
 
     private void cancelPreloadingImages() {
-        for (FileCacheDownloader preloadingImage : preloadingImages) {
+        for (ExhaustiveRandomAccessStreamReader preloadingImage : preloadingImages) {
             preloadingImage.cancel();
         }
         preloadingImages.clear();

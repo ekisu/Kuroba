@@ -1,4 +1,4 @@
-package com.github.adamantcheese.chan.core.cache;
+package com.github.adamantcheese.chan.core.cache.streams;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -21,6 +21,10 @@ public class RandomAccessStreamViewCreator {
         @Override
         public long length() throws IOException {
             return parent.length();
+        }
+
+        public RandomAccessStream getInnerStream() {
+            return this.parent.stream;
         }
 
         @Override
@@ -47,6 +51,7 @@ public class RandomAccessStreamViewCreator {
 
     private final RandomAccessStream stream;
     private final List<RandomAccessStreamView> children = new ArrayList<>();
+    private boolean closed = false;
 
     public RandomAccessStreamViewCreator(RandomAccessStream stream) {
         this.stream = stream;
@@ -57,7 +62,7 @@ public class RandomAccessStreamViewCreator {
     }
 
     protected int read(long position, byte[] output, long offset, long length) throws IOException{
-        synchronized (stream) {
+        synchronized (this) {
             stream.seek(position);
 
             return stream.read(output, offset, length);
@@ -65,12 +70,27 @@ public class RandomAccessStreamViewCreator {
     }
 
     public RandomAccessStreamView createView() {
-        RandomAccessStreamView view = new RandomAccessStreamView(this);
-        children.add(view);
-        return view;
+        synchronized (this) {
+            RandomAccessStreamView view = new RandomAccessStreamView(this);
+            children.add(view);
+            return view;
+        }
     }
 
-    protected void closeChildren(RandomAccessStreamView view) {
-        children.remove(view);
+    public boolean isClosed() {
+        synchronized (this) {
+            return closed;
+        }
+    }
+
+    protected void closeChildren(RandomAccessStreamView view) throws IOException {
+        synchronized (this) {
+            children.remove(view);
+
+            if (children.size() == 0) {
+                stream.close();
+                closed = true;
+            }
+        }
     }
 }

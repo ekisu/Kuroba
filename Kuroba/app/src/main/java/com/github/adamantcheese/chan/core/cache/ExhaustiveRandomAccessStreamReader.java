@@ -22,12 +22,10 @@ import androidx.annotation.AnyThread;
 import androidx.annotation.MainThread;
 import androidx.annotation.WorkerThread;
 
-import com.github.adamantcheese.chan.core.di.NetModule;
-import com.github.adamantcheese.chan.core.settings.ChanSettings;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamViewCreator;
 import com.github.adamantcheese.chan.utils.Logger;
 
-import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,25 +33,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import okhttp3.Call;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
-import okhttp3.internal.Util;
-import okio.Buffer;
-import okio.BufferedSink;
-import okio.Okio;
-import okio.Source;
-
-public class FileCacheDownloader implements Runnable {
-    private static final String TAG = "FileCacheDownloader";
+public class ExhaustiveRandomAccessStreamReader implements Runnable {
+    private static final String TAG = "ExhaustiveRandomAccessStreamReader";
     private static final long BUFFER_SIZE = 8192;
     private static final long NOTIFY_SIZE = BUFFER_SIZE * 8;
 
-    private final OkHttpClient httpClient;
-    private final String url;
-    private final File output;
     private final Handler handler;
 
     // Main thread only.
@@ -64,23 +48,16 @@ public class FileCacheDownloader implements Runnable {
     private AtomicBoolean running = new AtomicBoolean(false);
     private AtomicBoolean cancel = new AtomicBoolean(false);
     private Future<?> future;
+    private final RandomAccessStreamViewCreator.RandomAccessStreamView stream;
 
-    // Worker thread.
-    private Call call;
-    private ResponseBody body;
-
-    static FileCacheDownloader fromCallbackClientUrlOutputUserAgent(
-            Callback callback, OkHttpClient httpClient, String url,
-            File output) {
-        return new FileCacheDownloader(callback, httpClient, url, output);
+    static ExhaustiveRandomAccessStreamReader fromCallbackStream(
+            Callback callback, RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
+        return new ExhaustiveRandomAccessStreamReader(callback, stream);
     }
 
-    private FileCacheDownloader(Callback callback, OkHttpClient httpClient,
-                                String url, File output) {
+    private ExhaustiveRandomAccessStreamReader(Callback callback, RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
         this.callback = callback;
-        this.httpClient = httpClient;
-        this.url = url;
-        this.output = output;
+        this.stream = stream;
 
         handler = new Handler(Looper.getMainLooper());
     }
@@ -88,11 +65,6 @@ public class FileCacheDownloader implements Runnable {
     @MainThread
     public void execute(ExecutorService executor) {
         future = executor.submit(this);
-    }
-
-    @MainThread
-    public String getUrl() {
-        return url;
     }
 
     @AnyThread
@@ -125,16 +97,12 @@ public class FileCacheDownloader implements Runnable {
 
     @AnyThread
     private void log(String message) {
-        Logger.d(TAG, logPrefix() + message);
+        Logger.d(TAG, message);
     }
 
     @AnyThread
     private void log(String message, Exception e) {
-        Logger.e(TAG, logPrefix() + message, e);
-    }
-
-    private String logPrefix() {
-        return "[" + url.substring(0, Math.min(url.length(), 45)) + "] ";
+        Logger.e(TAG, message, e);
     }
 
     @Override
@@ -147,33 +115,19 @@ public class FileCacheDownloader implements Runnable {
 
     @WorkerThread
     private void execute() {
-        Closeable sourceCloseable = null;
-        Closeable sinkCloseable = null;
-
         try {
             checkCancel();
 
-            ResponseBody body = getBody();
+            log("starting read");
 
-            Source source = body.source();
-            sourceCloseable = source;
-
-            BufferedSink sink = Okio.buffer(Okio.sink(output));
-            sinkCloseable = sink;
-
-            checkCancel();
-
-            log("got input stream");
-
-            pipeBody(source, sink);
+            readExhaustive();
 
             log("done");
 
             post(() -> {
-                callback.downloaderAddedFile(output);
                 callback.downloaderFinished(this);
                 for (FileCacheListener callback : listeners) {
-                    callback.onSuccess(output);
+                    callback.onSuccess(stream);
                     callback.onEnd();
                 }
             });
@@ -192,14 +146,10 @@ public class FileCacheDownloader implements Runnable {
                 log("exception", e);
             }
 
+            // TODO implement not found
             final boolean finalIsNotFound = isNotFound;
             final boolean finalCancelled = cancelled;
             post(() -> {
-                for (FileCacheListener callback : listeners) {
-                    callback.beforePurgeOutput(output);
-                }
-
-                purgeOutput();
                 for (FileCacheListener callback : listeners) {
                     if (finalCancelled) {
                         callback.onCancel();
@@ -212,60 +162,24 @@ public class FileCacheDownloader implements Runnable {
                 callback.downloaderFinished(this);
             });
         } finally {
-            Util.closeQuietly(sourceCloseable);
-            Util.closeQuietly(sinkCloseable);
-
-            if (call != null) {
-                call.cancel();
-            }
-
-            if (body != null) {
-                Util.closeQuietly(body);
-            }
+            // TODO close stream? (v2)
+            try {
+                stream.close();
+            } catch (IOException e) {}
         }
     }
 
     @WorkerThread
-    private ResponseBody getBody() throws IOException {
-        Request request = new Request.Builder()
-                .url(url)
-                .header("User-Agent", NetModule.USER_AGENT)
-                .build();
-
-        call = httpClient.newBuilder()
-                .proxy(ChanSettings.getProxy())
-                .build()
-                .newCall(request);
-
-        Response response = call.execute();
-        if (!response.isSuccessful()) {
-            throw new HttpCodeIOException(response.code());
-        }
-
-        checkCancel();
-
-        body = response.body();
-        if (body == null) {
-            throw new IOException("body == null");
-        }
-
-        checkCancel();
-
-        return body;
-    }
-
-    @WorkerThread
-    private void pipeBody(Source source, BufferedSink sink) throws IOException {
-        long contentLength = body.contentLength();
+    private void readExhaustive() throws IOException {
+        long contentLength = stream.length();
 
         long read;
         long total = 0;
         long notifyTotal = 0;
 
-        Buffer buffer = new Buffer();
+        byte[] buffer = new byte[(int) BUFFER_SIZE];
 
-        while ((read = source.read(buffer, BUFFER_SIZE)) != -1) {
-            sink.write(buffer, read);
+        while ((read = stream.read(buffer, 0, BUFFER_SIZE)) != -1) {
             total += read;
 
             if (total >= notifyTotal + NOTIFY_SIZE) {
@@ -277,29 +191,13 @@ public class FileCacheDownloader implements Runnable {
             checkCancel();
         }
 
-        Util.closeQuietly(source);
-        Util.closeQuietly(sink);
-
-        call = null;
-        Util.closeQuietly(body);
-        body = null;
+        // TODO close stream?
     }
 
     @WorkerThread
     private void checkCancel() throws IOException {
         if (cancel.get()) {
             throw new CancelException();
-        }
-    }
-
-    @WorkerThread
-    private void purgeOutput() {
-        if (output.exists()) {
-            final boolean deleteResult = output.delete();
-
-            if (!deleteResult) {
-                log("could not delete the file in purgeOutput");
-            }
         }
     }
 
@@ -326,8 +224,6 @@ public class FileCacheDownloader implements Runnable {
     }
 
     public interface Callback {
-        void downloaderFinished(FileCacheDownloader fileCacheDownloader);
-
-        void downloaderAddedFile(File file);
+        void downloaderFinished(ExhaustiveRandomAccessStreamReader fileCacheDownloader);
     }
 }

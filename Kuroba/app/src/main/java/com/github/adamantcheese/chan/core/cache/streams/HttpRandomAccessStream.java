@@ -1,9 +1,10 @@
-package com.github.adamantcheese.chan.core.cache;
+package com.github.adamantcheese.chan.core.cache.streams;
 
 import com.github.adamantcheese.chan.core.di.NetModule;
 import com.github.adamantcheese.chan.core.settings.ChanSettings;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
@@ -11,7 +12,6 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import okio.BufferedSource;
-import okio.Okio;
 
 public class HttpRandomAccessStream implements RandomAccessStream {
     private final OkHttpClient httpClient;

@@ -20,10 +20,14 @@ import android.net.Uri;
 
 import androidx.annotation.MainThread;
 
+import com.github.adamantcheese.chan.core.cache.streams.CacheBackedRandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.HttpRandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.LazyRandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamReplicator;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamViewCreator;
 import com.github.adamantcheese.chan.utils.Logger;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.ProgressiveMediaSource;
-import com.google.android.exoplayer2.upstream.FileDataSource;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 import okhttp3.OkHttpClient;
 import okhttp3.Protocol;
 
-public class FileCache implements FileCacheDownloader.Callback {
+public class FileCache implements ExhaustiveRandomAccessStreamReader.Callback {
     private static final String TAG = "FileCache";
     private static final int TIMEOUT = 10000;
     private static final int DOWNLOAD_POOL_SIZE = 2;
@@ -50,7 +54,7 @@ public class FileCache implements FileCacheDownloader.Callback {
     private final PartialCacheHandler partialCacheHandler;
 
     private HashMap<String, RandomAccessStreamViewCreator> openCacheBackedStreams = new HashMap<>();
-    private List<FileCacheDownloader> downloaders = new ArrayList<>();
+    private List<ExhaustiveRandomAccessStreamReader> downloaders = new ArrayList<>();
 
     public FileCache(File directory) {
         httpClient = new OkHttpClient.Builder()
@@ -66,7 +70,7 @@ public class FileCache implements FileCacheDownloader.Callback {
     }
 
     public void clearCache() {
-        for (FileCacheDownloader downloader : downloaders) {
+        for (ExhaustiveRandomAccessStreamReader downloader : downloaders) {
             downloader.cancel();
         }
 
@@ -78,48 +82,36 @@ public class FileCache implements FileCacheDownloader.Callback {
      * If the file is in the cache then the callback is executed immediately and null is
      * returned.<br>
      * Otherwise if the file is downloading or has not yet started downloading a
-     * {@link FileCacheDownloader} is returned.<br>
+     * {@link ExhaustiveRandomAccessStreamReader} is returned.<br>
      *
      * @param url      the url to download.
      * @param listener listener to execute callbacks on.
-     * @return {@code null} if in the cache, {@link FileCacheDownloader} otherwise.
+     * @return {@code null} if in the cache, {@link ExhaustiveRandomAccessStreamReader} otherwise.
      */
     @MainThread
-    public FileCacheDownloader downloadFile(String url, FileCacheListener listener) {
-        FileCacheDownloader runningDownloaderForKey = getDownloaderByKey(url);
-        if (runningDownloaderForKey != null) {
-            runningDownloaderForKey.addListener(listener);
-            return runningDownloaderForKey;
-        }
+    public ExhaustiveRandomAccessStreamReader downloadFile(String url, FileCacheListener listener) {
+        try {
+            RandomAccessStreamViewCreator.RandomAccessStreamView view = getCacheBackedStream(url);
+            ExhaustiveRandomAccessStreamReader reader = ExhaustiveRandomAccessStreamReader.fromCallbackStream(this, view);
+            reader.addListener(listener);
+            reader.execute(downloadPool);
 
-        File file = get(url);
-        if (file.exists()) {
-            handleFileImmediatelyAvailable(listener, file);
+            return reader;
+        } catch (IOException e) {
+            Logger.e(TAG, "downloadFile: ", e);
             return null;
-        } else {
-            return handleStartDownload(listener, file, url);
         }
     }
 
-    public FileCacheDownloader getDownloaderByKey(String key) {
-        for (FileCacheDownloader downloader : downloaders) {
-            if (downloader.getUrl().equals(key)) {
-                return downloader;
-            }
-        }
-        return null;
-    }
-
-    public MediaSource createMediaSource(String url) throws IOException {
-        Uri uri = Uri.parse(url);
-
+    public FileCacheDataSource createDataSource(String url) throws IOException {
         FileCacheDataSource dataSource = new FileCacheDataSource(getCacheBackedStream(url));
 
-        return new ProgressiveMediaSource.Factory(() -> dataSource).createMediaSource(uri);
+        return dataSource;
     }
 
     public RandomAccessStreamViewCreator.RandomAccessStreamView getCacheBackedStream(String url) throws IOException {
-        if (!openCacheBackedStreams.containsKey(url)) {
+        if (!openCacheBackedStreams.containsKey(url)
+            || openCacheBackedStreams.get(url).isClosed()) {
             final LazyRandomAccessStream lazyReplicatedHttpStream = new LazyRandomAccessStream(
                 () -> new RandomAccessStreamReplicator(
                     startingPosition -> new HttpRandomAccessStream(httpClient, url, startingPosition)
@@ -138,13 +130,8 @@ public class FileCache implements FileCacheDownloader.Callback {
     }
 
     @Override
-    public void downloaderFinished(FileCacheDownloader fileCacheDownloader) {
+    public void downloaderFinished(ExhaustiveRandomAccessStreamReader fileCacheDownloader) {
         downloaders.remove(fileCacheDownloader);
-    }
-
-    @Override
-    public void downloaderAddedFile(File file) {
-        cacheHandler.fileWasAdded(file);
     }
 
     public boolean exists(String key) {
@@ -157,28 +144,5 @@ public class FileCache implements FileCacheDownloader.Callback {
 
     public long getFileCacheSize() {
         return cacheHandler.getSize().get();
-    }
-
-    private void handleFileImmediatelyAvailable(FileCacheListener listener, File file) {
-        // TODO: setLastModified doesn't seem to work on Android...
-        if (!file.setLastModified(System.currentTimeMillis())) {
-            Logger.e(TAG, "Could not set last modified time on file");
-        }
-        listener.onSuccess(file);
-        listener.onEnd();
-    }
-
-    private FileCacheDownloader handleStartDownload(
-            FileCacheListener listener, File file, String url) {
-        FileCacheDownloader downloader = FileCacheDownloader.fromCallbackClientUrlOutputUserAgent(
-                this, httpClient, url, file);
-        downloader.addListener(listener);
-        downloader.execute(downloadPool);
-        downloaders.add(downloader);
-        return downloader;
-    }
-
-    public interface MediaSourceCallback {
-        void onMediaSourceReady(MediaSource source);
     }
 }

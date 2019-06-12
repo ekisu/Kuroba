@@ -1,28 +1,17 @@
 package com.github.adamantcheese.chan.core.cache;
 
 import android.net.Uri;
-import android.util.Range;
 
 import androidx.annotation.Nullable;
 
-import com.github.adamantcheese.chan.core.di.NetModule;
+import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStream;
 import com.github.adamantcheese.chan.utils.Logger;
 import com.google.android.exoplayer2.upstream.BaseDataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.upstream.DefaultHttpDataSourceFactory;
-import com.google.android.exoplayer2.upstream.HttpDataSource;
 
 import java.io.EOFException;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-
-import okhttp3.OkHttpClient;
 
 public class FileCacheDataSource extends BaseDataSource {
     public interface UriRandomAccessStreamFactory {
@@ -34,8 +23,6 @@ public class FileCacheDataSource extends BaseDataSource {
     private final RandomAccessStream inputStream;
     private @Nullable Uri uri;
     private long bytesRemaining = 0;
-
-    private boolean opened = false;
 
     public FileCacheDataSource(
             RandomAccessStream inputStream) {
@@ -94,9 +81,15 @@ public class FileCacheDataSource extends BaseDataSource {
     @Override
     public void close() throws IOException {
         Logger.i(TAG, "close");
-        if (opened) {
-            opened = false;
-            transferEnded();
+
+        transferEnded();
+    }
+
+    public void closeStream() {
+        try {
+            inputStream.close();
+        } catch (IOException e) {
+            Logger.e(TAG, "closeStream: ", e);
         }
     }
 }
