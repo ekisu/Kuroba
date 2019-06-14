@@ -2,6 +2,7 @@ package com.github.adamantcheese.chan.core.cache.streams;
 
 import com.github.adamantcheese.chan.core.di.NetModule;
 import com.github.adamantcheese.chan.core.settings.ChanSettings;
+import com.github.adamantcheese.chan.utils.Logger;
 
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -14,30 +15,34 @@ import okhttp3.ResponseBody;
 import okio.BufferedSource;
 
 public class HttpRandomAccessStream implements RandomAccessStream {
+    private static final String TAG = "HttpRandomAccessStream";
+
     private final OkHttpClient httpClient;
-    private final long startPosition;
+    private long startPosition;
     private final String url;
 
-    private final long contentLength;
+    private long contentLength;
     private long position = 0;
 
     private Call call;
+    private Response response;
     private ResponseBody body;
     private BufferedSource source;
 
-    public HttpRandomAccessStream(OkHttpClient httpClient, String url, long startPosition) throws IOException {
+    private AtomicBoolean closed = new AtomicBoolean(false);
+
+    public HttpRandomAccessStream(OkHttpClient httpClient, String url) {
         this.httpClient = httpClient;
         this.url = url;
-        this.startPosition = startPosition;
-        this.position = startPosition;
-
-        // TODO opening on creation is... weird.
-        getBody(startPosition);
-        contentLength = body.contentLength();
-        source = body.source();
     }
 
-    private void getBody(long startPosition) throws IOException {
+    private void throwIfClosed() throws ClosedException {
+        if (closed.get()) {
+            throw new ClosedException("Stream was closed");
+        }
+    }
+
+    private synchronized void getBody(long startPosition) throws IOException {
         Request.Builder builder = new Request.Builder()
                 .url(url)
                 .header("User-Agent", NetModule.USER_AGENT);
@@ -53,11 +58,13 @@ public class HttpRandomAccessStream implements RandomAccessStream {
                 .build()
                 .newCall(request);
 
-        Response response = call.execute();
+        response = call.execute();
         if (!response.isSuccessful()) {
             // TODO this was HTTPCodeIOException before.
             throw new IOException("Invalid response: " + response.code());
         }
+
+        throwIfClosed();
 
         body = response.body();
         if (body == null) {
@@ -66,17 +73,27 @@ public class HttpRandomAccessStream implements RandomAccessStream {
     }
 
     @Override
-    public long position() {
+    public synchronized void open(long startPosition) throws IOException {
+        this.startPosition = startPosition;
+        this.position = startPosition;
+
+        getBody(startPosition);
+        contentLength = body.contentLength();
+        source = body.source();
+    }
+
+    @Override
+    public synchronized long position() {
         return position;
     }
 
     @Override
-    public long length() {
+    public synchronized long length() {
         return startPosition + contentLength;
     }
 
     @Override
-    public int read(byte[] output, long offset, long length) throws IOException {
+    public synchronized int read(byte[] output, long offset, long length) throws IOException {
         int bytesRead = source.read(output, (int) offset, (int) length);
         if (bytesRead > 0) {
             this.position += bytesRead;
@@ -85,13 +102,47 @@ public class HttpRandomAccessStream implements RandomAccessStream {
     }
 
     @Override
-    public void seek(long pos) {
+    public synchronized void seek(long pos) {
         /* TODO this is not seekable. change the interface type used with RandomAccessStreamReplicator
          to something that reflects this. */
     }
 
+    private synchronized void doClose() {
+        try {
+            if (source != null) {
+                source.close();
+            }
+            if (body != null) {
+                body.close();
+            }
+            if (response != null) {
+                if (response.body() != null) {
+                    response.body().close();
+                }
+
+                response.close();
+            }
+        } catch (IOException e) {
+            Logger.e(TAG, "doClose: ", e);
+        } finally {
+            call = null;
+            source = null;
+            body = null;
+        }
+    }
+
     @Override
-    public void close() throws IOException {
-        source.close();
+    public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+
+        new Thread(() -> {
+            if (call != null) {
+                call.cancel();
+            }
+
+            doClose();
+        }).run();
     }
 }

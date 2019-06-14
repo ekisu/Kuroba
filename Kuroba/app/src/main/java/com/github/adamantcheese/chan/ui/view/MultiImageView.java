@@ -17,7 +17,6 @@
 package com.github.adamantcheese.chan.ui.view;
 
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.net.Uri;
@@ -28,7 +27,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.Toast;
 
-import androidx.core.content.FileProvider;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleObserver;
 import androidx.lifecycle.OnLifecycleEvent;
@@ -40,14 +38,12 @@ import com.davemorrissey.labs.subscaleview.ImageSource;
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView;
 import com.github.adamantcheese.chan.R;
 import com.github.adamantcheese.chan.StartActivity;
-import com.github.adamantcheese.chan.core.cache.ExhaustiveRandomAccessStreamReader;
+import com.github.adamantcheese.chan.core.cache.FileCacheDownloader;
 import com.github.adamantcheese.chan.core.cache.FileCache;
 import com.github.adamantcheese.chan.core.cache.FileCacheDataSource;
 import com.github.adamantcheese.chan.core.cache.FileCacheListener;
 import com.github.adamantcheese.chan.core.cache.streams.CacheBackedRandomAccessStream;
-import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStream;
 import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamViewCreator;
-import com.github.adamantcheese.chan.core.cache.streams.adaptors.RandomAccessStreamToInputStreamAdaptor;
 import com.github.adamantcheese.chan.core.model.PostImage;
 import com.github.adamantcheese.chan.core.settings.ChanSettings;
 import com.github.adamantcheese.chan.utils.AndroidUtils;
@@ -60,7 +56,6 @@ import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.ProgressiveMediaSource;
 import com.google.android.exoplayer2.ui.PlayerView;
 
-import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException;
 
@@ -70,7 +65,6 @@ import pl.droidsonroids.gif.GifDrawable;
 import pl.droidsonroids.gif.GifImageView;
 
 import static com.github.adamantcheese.chan.Chan.inject;
-import static com.github.adamantcheese.chan.utils.AndroidUtils.getAppContext;
 
 public class MultiImageView extends FrameLayout implements View.OnClickListener, AudioListener, LifecycleObserver {
     public enum Mode {
@@ -94,12 +88,11 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
 
     private boolean hasContent = false;
     private ImageContainer thumbnailRequest;
-    private ExhaustiveRandomAccessStreamReader bigImageRequest;
-    private ExhaustiveRandomAccessStreamReader gifRequest;
-    private ExhaustiveRandomAccessStreamReader videoRequest;
+    private FileCacheDownloader bigImageRequest;
+    private FileCacheDownloader gifRequest;
+    private FileCacheDownloader videoRequest;
 
     private SimpleExoPlayer exoPlayer;
-    private boolean mediaSourceCancel = false;
     private FileCacheDataSource videoDataSource;
 
     private boolean backgroundToggle;
@@ -231,10 +224,6 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
             videoRequest = null;
         }
 
-        synchronized (this) {
-            mediaSourceCancel = true;
-        }
-
         if (exoPlayer != null) {
             // ExoPlayer will keep loading resources if we don't release it here.
             exoPlayer.release();
@@ -311,10 +300,8 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
             }
 
             @Override
-            public void onSuccess(RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
-                CacheBackedRandomAccessStream cacheStream = (CacheBackedRandomAccessStream) stream.getInnerStream();
-
-                setBigImageFile(cacheStream.getBackingFile());
+            public void onSuccess(File file) {
+                setBigImageFile(file);
             }
 
             @Override
@@ -356,9 +343,9 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
             }
 
             @Override
-            public void onSuccess(RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
+            public void onSuccess(File file) {
                 if (!hasContent || mode == Mode.GIF) {
-                    setGifStream(stream);
+                    setGifFile(file);
                 }
             }
 
@@ -379,19 +366,17 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
         });
     }
 
-    private void setGifStream(RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
+    private void setGifFile(File file) {
         GifDrawable drawable;
         try {
-            drawable = new GifDrawable(
-                    new BufferedInputStream(new RandomAccessStreamToInputStreamAdaptor(stream)));
+            drawable = new GifDrawable(file);
 
             // For single frame gifs, use the scaling image instead
             // The region decoder doesn't work for gifs, so we unfortunately
             // have to use the more memory intensive non tiling mode.
             if (drawable.getNumberOfFrames() == 1) {
                 drawable.recycle();
-                CacheBackedRandomAccessStream cacheStream = (CacheBackedRandomAccessStream) stream.getInnerStream();
-                setBitImageFileInternal(cacheStream.getBackingFile(), false, Mode.GIF);
+                setBitImageFileInternal(file, false, Mode.GIF);
                 return;
             }
         } catch (IOException e) {

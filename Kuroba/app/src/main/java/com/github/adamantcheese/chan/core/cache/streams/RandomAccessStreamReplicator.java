@@ -1,5 +1,7 @@
 package com.github.adamantcheese.chan.core.cache.streams;
 
+import com.github.adamantcheese.chan.utils.Logger;
+
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -19,8 +21,6 @@ public class RandomAccessStreamReplicator implements RandomAccessStream {
 
     public RandomAccessStreamReplicator(InputStreamFactory factory) throws IOException {
         this.inputStreamFactory = factory;
-
-        createNewInputStream(position);
     }
 
     private RandomAccessStream findInputStream(long position) throws IOException {
@@ -41,6 +41,12 @@ public class RandomAccessStreamReplicator implements RandomAccessStream {
 
         inputStreams.add(r);
         return r;
+    }
+
+    @Override
+    public void open(long startPosition) throws IOException {
+        createNewInputStream(startPosition);
+        this.seek(startPosition);
     }
 
     @Override

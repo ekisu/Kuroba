@@ -10,6 +10,7 @@ public class LazyRandomAccessStream implements RandomAccessStream {
     private final StreamFactory factory;
     private RandomAccessStream stream;
     private boolean initialized = false;
+    private long startPosition = 0;
 
     public LazyRandomAccessStream(StreamFactory factory) {
         this.factory = factory;
@@ -17,7 +18,13 @@ public class LazyRandomAccessStream implements RandomAccessStream {
 
     private void initialize() throws IOException {
         stream = factory.createStream();
+        stream.open(startPosition);
         initialized = true;
+    }
+
+    @Override
+    public void open(long startPosition) {
+        this.startPosition = startPosition;
     }
 
     @Override

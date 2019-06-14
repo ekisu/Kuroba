@@ -23,6 +23,7 @@ public class FileCacheDataSource extends BaseDataSource {
     private final RandomAccessStream inputStream;
     private @Nullable Uri uri;
     private long bytesRemaining = 0;
+    private boolean opened;
 
     public FileCacheDataSource(
             RandomAccessStream inputStream) {
@@ -37,7 +38,7 @@ public class FileCacheDataSource extends BaseDataSource {
         transferInitializing(dataSpec);
 
         Logger.i(TAG, "opening, position: " + dataSpec.position + " length: " + dataSpec.length);
-        inputStream.seek(dataSpec.position);
+        inputStream.open(dataSpec.position);
 
         bytesRemaining = dataSpec.length == C.LENGTH_UNSET
             ? inputStream.length() - dataSpec.position
@@ -48,6 +49,7 @@ public class FileCacheDataSource extends BaseDataSource {
             throw new EOFException();
         }
 
+        opened = true;
         transferStarted(dataSpec);
 
         return bytesRemaining;
@@ -82,11 +84,15 @@ public class FileCacheDataSource extends BaseDataSource {
     public void close() throws IOException {
         Logger.i(TAG, "close");
 
-        transferEnded();
+        if (opened) {
+            opened = false;
+            transferEnded();
+        }
     }
 
     public void closeStream() {
         try {
+            Logger.d(TAG, "should be spawning close thread");
             inputStream.close();
         } catch (IOException e) {
             Logger.e(TAG, "closeStream: ", e);

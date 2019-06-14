@@ -16,18 +16,15 @@
  */
 package com.github.adamantcheese.chan.core.cache;
 
-import android.net.Uri;
-
 import androidx.annotation.MainThread;
 
+import com.android.volley.Cache;
 import com.github.adamantcheese.chan.core.cache.streams.CacheBackedRandomAccessStream;
 import com.github.adamantcheese.chan.core.cache.streams.HttpRandomAccessStream;
 import com.github.adamantcheese.chan.core.cache.streams.LazyRandomAccessStream;
 import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamReplicator;
 import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamViewCreator;
 import com.github.adamantcheese.chan.utils.Logger;
-import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.source.ProgressiveMediaSource;
 
 import java.io.File;
 import java.io.IOException;
@@ -42,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 import okhttp3.OkHttpClient;
 import okhttp3.Protocol;
 
-public class FileCache implements ExhaustiveRandomAccessStreamReader.Callback {
+public class FileCache implements FileCacheDownloader.Callback {
     private static final String TAG = "FileCache";
     private static final int TIMEOUT = 10000;
     private static final int DOWNLOAD_POOL_SIZE = 2;
@@ -53,8 +50,8 @@ public class FileCache implements ExhaustiveRandomAccessStreamReader.Callback {
     private final CacheHandler cacheHandler;
     private final PartialCacheHandler partialCacheHandler;
 
-    private HashMap<String, RandomAccessStreamViewCreator> openCacheBackedStreams = new HashMap<>();
-    private List<ExhaustiveRandomAccessStreamReader> downloaders = new ArrayList<>();
+    private HashMap<String, RandomAccessStreamViewCreator<CacheBackedRandomAccessStream>> openCacheBackedStreams = new HashMap<>();
+    private HashMap<String, FileCacheDownloader> downloaders = new HashMap<>();
 
     public FileCache(File directory) {
         httpClient = new OkHttpClient.Builder()
@@ -70,7 +67,7 @@ public class FileCache implements ExhaustiveRandomAccessStreamReader.Callback {
     }
 
     public void clearCache() {
-        for (ExhaustiveRandomAccessStreamReader downloader : downloaders) {
+        for (FileCacheDownloader downloader : downloaders.values()) {
             downloader.cancel();
         }
 
@@ -82,21 +79,28 @@ public class FileCache implements ExhaustiveRandomAccessStreamReader.Callback {
      * If the file is in the cache then the callback is executed immediately and null is
      * returned.<br>
      * Otherwise if the file is downloading or has not yet started downloading a
-     * {@link ExhaustiveRandomAccessStreamReader} is returned.<br>
+     * {@link FileCacheDownloader} is returned.<br>
      *
      * @param url      the url to download.
      * @param listener listener to execute callbacks on.
-     * @return {@code null} if in the cache, {@link ExhaustiveRandomAccessStreamReader} otherwise.
+     * @return {@code null} if in the cache, {@link FileCacheDownloader} otherwise.
      */
     @MainThread
-    public ExhaustiveRandomAccessStreamReader downloadFile(String url, FileCacheListener listener) {
+    public FileCacheDownloader downloadFile(String url, FileCacheListener listener) {
+        if (downloaders.containsKey(url)) {
+            FileCacheDownloader downloader = downloaders.get(url);
+            downloader.addListener(listener);
+            return downloader;
+        }
+
         try {
             RandomAccessStreamViewCreator.RandomAccessStreamView view = getCacheBackedStream(url);
-            ExhaustiveRandomAccessStreamReader reader = ExhaustiveRandomAccessStreamReader.fromCallbackStream(this, view);
-            reader.addListener(listener);
-            reader.execute(downloadPool);
+            FileCacheDownloader downloader = FileCacheDownloader.fromCallbackStream(this, view);
+            downloader.addListener(listener);
+            downloader.execute(downloadPool);
+            downloaders.put(url, downloader);
 
-            return reader;
+            return downloader;
         } catch (IOException e) {
             Logger.e(TAG, "downloadFile: ", e);
             return null;
@@ -106,15 +110,23 @@ public class FileCache implements ExhaustiveRandomAccessStreamReader.Callback {
     public FileCacheDataSource createDataSource(String url) throws IOException {
         FileCacheDataSource dataSource = new FileCacheDataSource(getCacheBackedStream(url));
 
+        if (downloaders.containsKey(url)) {
+            downloaders.get(url).cancel();
+        }
+
         return dataSource;
     }
 
-    public RandomAccessStreamViewCreator.RandomAccessStreamView getCacheBackedStream(String url) throws IOException {
+    public RandomAccessStreamViewCreator<CacheBackedRandomAccessStream>.RandomAccessStreamView getCacheBackedStream(String url) throws IOException {
         if (!openCacheBackedStreams.containsKey(url)
             || openCacheBackedStreams.get(url).isClosed()) {
             final LazyRandomAccessStream lazyReplicatedHttpStream = new LazyRandomAccessStream(
                 () -> new RandomAccessStreamReplicator(
-                    startingPosition -> new HttpRandomAccessStream(httpClient, url, startingPosition)
+                    startingPosition -> {
+                        HttpRandomAccessStream stream = new HttpRandomAccessStream(httpClient, url);
+                        stream.open(startingPosition);
+                        return stream;
+                    }
             ));
 
             final CacheBackedRandomAccessStream cacheBackedStream = partialCacheHandler.getCacheBackedRandomAccessStream(url, lazyReplicatedHttpStream);
@@ -130,8 +142,8 @@ public class FileCache implements ExhaustiveRandomAccessStreamReader.Callback {
     }
 
     @Override
-    public void downloaderFinished(ExhaustiveRandomAccessStreamReader fileCacheDownloader) {
-        downloaders.remove(fileCacheDownloader);
+    public void downloaderFinished(FileCacheDownloader fileCacheDownloader) {
+        downloaders.values().remove(fileCacheDownloader);
     }
 
     public boolean exists(String key) {

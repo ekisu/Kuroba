@@ -16,8 +16,7 @@
  */
 package com.github.adamantcheese.chan.core.cache;
 
-import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStream;
-import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamViewCreator;
+import java.io.File;
 
 public abstract class FileCacheListener {
     public void onProgress(long downloaded, long total) {
@@ -26,7 +25,7 @@ public abstract class FileCacheListener {
     /**
      * Called when the file download was completed.
      */
-    public void onSuccess(RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
+    public void onSuccess(File file) {
     }
 
     /**

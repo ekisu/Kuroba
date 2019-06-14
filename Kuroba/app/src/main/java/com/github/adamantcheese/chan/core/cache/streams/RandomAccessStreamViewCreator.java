@@ -1,16 +1,25 @@
 package com.github.adamantcheese.chan.core.cache.streams;
 
+import com.github.adamantcheese.chan.utils.Logger;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-public class RandomAccessStreamViewCreator {
+public class RandomAccessStreamViewCreator<S extends RandomAccessStream> {
     public class RandomAccessStreamView implements RandomAccessStream {
-        private final RandomAccessStreamViewCreator parent;
+        private static final String TAG = "RandomAccessStreamView";
+        private final RandomAccessStreamViewCreator<S> parent;
         private long position = 0;
 
-        public RandomAccessStreamView(RandomAccessStreamViewCreator parent) {
+        public RandomAccessStreamView(RandomAccessStreamViewCreator<S> parent) {
             this.parent = parent;
+        }
+
+        @Override
+        public void open(long startPosition) throws IOException {
+            parent.open(startPosition);
+            this.seek(startPosition);
         }
 
         @Override
@@ -23,7 +32,7 @@ public class RandomAccessStreamViewCreator {
             return parent.length();
         }
 
-        public RandomAccessStream getInnerStream() {
+        public S getInnerStream() {
             return this.parent.stream;
         }
 
@@ -49,19 +58,29 @@ public class RandomAccessStreamViewCreator {
         }
     }
 
-    private final RandomAccessStream stream;
+    private static final String TAG = "RandomAccessStreamViewCreator";
+
+    private final S stream;
     private final List<RandomAccessStreamView> children = new ArrayList<>();
+    private boolean opened = false;
     private boolean closed = false;
 
-    public RandomAccessStreamViewCreator(RandomAccessStream stream) {
+    public RandomAccessStreamViewCreator(S stream) {
         this.stream = stream;
+    }
+
+    protected void open(long startPosition) throws IOException {
+        if (opened) return;
+
+        stream.open(startPosition);
+        opened = true;
     }
 
     protected long length() throws IOException {
         return this.stream.length();
     }
 
-    protected int read(long position, byte[] output, long offset, long length) throws IOException{
+    protected int read(long position, byte[] output, long offset, long length) throws IOException {
         synchronized (this) {
             stream.seek(position);
 

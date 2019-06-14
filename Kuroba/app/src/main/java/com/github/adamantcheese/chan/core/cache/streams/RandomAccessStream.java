@@ -3,6 +3,7 @@ package com.github.adamantcheese.chan.core.cache.streams;
 import java.io.IOException;
 
 public interface RandomAccessStream {
+    void open(long startPosition) throws IOException;
     long position() throws IOException;
     long length() throws IOException;
     int read(byte[] output, long offset, long length) throws IOException;

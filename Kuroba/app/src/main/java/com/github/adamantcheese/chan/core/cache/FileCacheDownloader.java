@@ -22,7 +22,8 @@ import androidx.annotation.AnyThread;
 import androidx.annotation.MainThread;
 import androidx.annotation.WorkerThread;
 
-import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.CacheBackedRandomAccessStream;
+import com.github.adamantcheese.chan.core.cache.streams.ClosedException;
 import com.github.adamantcheese.chan.core.cache.streams.RandomAccessStreamViewCreator;
 import com.github.adamantcheese.chan.utils.Logger;
 
@@ -33,8 +34,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ExhaustiveRandomAccessStreamReader implements Runnable {
-    private static final String TAG = "ExhaustiveRandomAccessStreamReader";
+public class FileCacheDownloader implements Runnable {
+    private static final String TAG = "FileCacheDownloader";
     private static final long BUFFER_SIZE = 8192;
     private static final long NOTIFY_SIZE = BUFFER_SIZE * 8;
 
@@ -48,14 +49,15 @@ public class ExhaustiveRandomAccessStreamReader implements Runnable {
     private AtomicBoolean running = new AtomicBoolean(false);
     private AtomicBoolean cancel = new AtomicBoolean(false);
     private Future<?> future;
-    private final RandomAccessStreamViewCreator.RandomAccessStreamView stream;
+    private final RandomAccessStreamViewCreator<CacheBackedRandomAccessStream>.RandomAccessStreamView stream;
 
-    static ExhaustiveRandomAccessStreamReader fromCallbackStream(
-            Callback callback, RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
-        return new ExhaustiveRandomAccessStreamReader(callback, stream);
+    static FileCacheDownloader fromCallbackStream(
+            Callback callback, RandomAccessStreamViewCreator<CacheBackedRandomAccessStream>.RandomAccessStreamView stream) {
+        return new FileCacheDownloader(callback, stream);
     }
 
-    private ExhaustiveRandomAccessStreamReader(Callback callback, RandomAccessStreamViewCreator.RandomAccessStreamView stream) {
+    private FileCacheDownloader(Callback callback,
+                                RandomAccessStreamViewCreator<CacheBackedRandomAccessStream>.RandomAccessStreamView stream) {
         this.callback = callback;
         this.stream = stream;
 
@@ -86,6 +88,13 @@ public class ExhaustiveRandomAccessStreamReader implements Runnable {
             // Did not start running yet, mark finished here.
             if (!running.get()) {
                 callback.downloaderFinished(this);
+            } else {
+                // Close inner stream, should (somewhat) immediately stop reading.
+                try {
+                    stream.close();
+                } catch (IOException e) {
+                    Logger.e(TAG, "error while closing inner stream", e);
+                }
             }
         }
     }
@@ -124,10 +133,11 @@ public class ExhaustiveRandomAccessStreamReader implements Runnable {
 
             log("done");
 
+            // Rewind stream, and send them to listeners.
             post(() -> {
                 callback.downloaderFinished(this);
                 for (FileCacheListener callback : listeners) {
-                    callback.onSuccess(stream);
+                    callback.onSuccess(stream.getInnerStream().getBackingFile());
                     callback.onEnd();
                 }
             });
@@ -138,7 +148,7 @@ public class ExhaustiveRandomAccessStreamReader implements Runnable {
                 int code = ((HttpCodeIOException) e).code;
                 log("exception: http error, code: " + code, e);
                 isNotFound = code == 404;
-            } else if (e instanceof CancelException) {
+            } else if (e instanceof CancelException || e instanceof ClosedException) {
                 // Don't log the stack.
                 log("exception: cancelled");
                 cancelled = true;
@@ -162,7 +172,6 @@ public class ExhaustiveRandomAccessStreamReader implements Runnable {
                 callback.downloaderFinished(this);
             });
         } finally {
-            // TODO close stream? (v2)
             try {
                 stream.close();
             } catch (IOException e) {}
@@ -171,6 +180,7 @@ public class ExhaustiveRandomAccessStreamReader implements Runnable {
 
     @WorkerThread
     private void readExhaustive() throws IOException {
+        stream.open(0);
         long contentLength = stream.length();
 
         long read;
@@ -190,8 +200,6 @@ public class ExhaustiveRandomAccessStreamReader implements Runnable {
 
             checkCancel();
         }
-
-        // TODO close stream?
     }
 
     @WorkerThread
@@ -224,6 +232,6 @@ public class ExhaustiveRandomAccessStreamReader implements Runnable {
     }
 
     public interface Callback {
-        void downloaderFinished(ExhaustiveRandomAccessStreamReader fileCacheDownloader);
+        void downloaderFinished(FileCacheDownloader fileCacheDownloader);
     }
 }
