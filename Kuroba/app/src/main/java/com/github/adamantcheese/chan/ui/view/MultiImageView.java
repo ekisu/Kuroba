@@ -401,30 +401,26 @@ public class MultiImageView extends FrameLayout implements View.OnClickListener,
     }
 
     private void openVideoInternalStream(String videoUrl) {
-        try {
-            videoDataSource = fileCache.createDataSource(videoUrl);
-            MediaSource mediaSource = new ProgressiveMediaSource.Factory(() -> videoDataSource)
-                    .createMediaSource(Uri.parse(videoUrl));
+        videoDataSource = fileCache.createDataSource(videoUrl);
+        MediaSource mediaSource = new ProgressiveMediaSource.Factory(() -> videoDataSource)
+                .createMediaSource(Uri.parse(videoUrl));
 
-            if (!hasContent || mode == Mode.MOVIE) {
-                PlayerView exoVideoView = new PlayerView(getContext());
-                exoPlayer = ExoPlayerFactory.newSimpleInstance(getContext());
-                exoVideoView.setPlayer(exoPlayer);
+        if (!hasContent || mode == Mode.MOVIE) {
+            PlayerView exoVideoView = new PlayerView(getContext());
+            exoPlayer = ExoPlayerFactory.newSimpleInstance(getContext());
+            exoVideoView.setPlayer(exoPlayer);
 
-                exoPlayer.setRepeatMode(ChanSettings.videoAutoLoop.get() ?
-                        Player.REPEAT_MODE_ALL : Player.REPEAT_MODE_OFF);
+            exoPlayer.setRepeatMode(ChanSettings.videoAutoLoop.get() ?
+                    Player.REPEAT_MODE_ALL : Player.REPEAT_MODE_OFF);
 
-                exoPlayer.prepare(mediaSource);
-                exoPlayer.setVolume(0f);
-                exoPlayer.addAudioListener(MultiImageView.this);
+            exoPlayer.prepare(mediaSource);
+            exoPlayer.setVolume(0f);
+            exoPlayer.addAudioListener(MultiImageView.this);
 
-                addView(exoVideoView);
-                exoPlayer.setPlayWhenReady(true);
-                onModeLoaded(Mode.MOVIE, exoVideoView);
-                callback.onVideoLoaded(MultiImageView.this);
-            }
-        } catch (IOException e) {
-            Logger.e(TAG, "IOException", e);
+            addView(exoVideoView);
+            exoPlayer.setPlayWhenReady(true);
+            onModeLoaded(Mode.MOVIE, exoVideoView);
+            callback.onVideoLoaded(MultiImageView.this);
         }
     }
 

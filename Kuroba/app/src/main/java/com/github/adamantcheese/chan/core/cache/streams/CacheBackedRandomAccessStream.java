@@ -19,13 +19,21 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CacheBackedRandomAccessStream implements RandomAccessStream {
+    public interface Callback {
+        void streamClosed(long sizeDifference);
+    }
+
     private static final String TAG = "CacheBackedRandomAccessStream";
 
     private final ExecutorService writeMetadataExecutor = Executors.newSingleThreadExecutor();
 
     private final File directory;
     private final String filename;
+    private final Callback callback;
+
     private RandomAccessFile file;
+
+    private long fileInitialLength;
     private RandomAccessStream inputStream;
     private AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -33,11 +41,14 @@ public class CacheBackedRandomAccessStream implements RandomAccessStream {
     private Long metadataSavedLength = null;
     private long position = 0;
 
-    public CacheBackedRandomAccessStream(File directory, String filename, RandomAccessStream inputStream) throws IOException {
+    public CacheBackedRandomAccessStream(File directory,
+                                         String filename,
+                                         RandomAccessStream inputStream,
+                                         Callback callback) {
         this.directory = directory;
         this.filename = filename;
-        this.file = new RandomAccessFile(getBackingFile(), "rw");
         this.inputStream = inputStream;
+        this.callback = callback;
     }
 
     private void throwIfClosed() throws ClosedException {
@@ -67,6 +78,18 @@ public class CacheBackedRandomAccessStream implements RandomAccessStream {
         }
     }
 
+    protected boolean isComplete() {
+        return metadataSavedLength != null
+                && cachedRegions.contains(new Range<>(0l, metadataSavedLength - 1));
+    }
+
+    public static boolean isKeyComplete(File directory, String key) {
+        CacheBackedRandomAccessStream stream = new CacheBackedRandomAccessStream(directory, key, null, null);
+
+        stream.readMetadata();
+        return stream.isComplete();
+    }
+
     private synchronized void writeMetadata() throws IOException {
         Logger.d(TAG, "writing metadata");
         try (
@@ -82,6 +105,9 @@ public class CacheBackedRandomAccessStream implements RandomAccessStream {
 
     @Override
     public void open(long startPosition) throws IOException {
+        file = new RandomAccessFile(getBackingFile(), "rw");
+        fileInitialLength = file.length();
+
         readMetadata();
 
         inputStream.open(position);
@@ -160,6 +186,10 @@ public class CacheBackedRandomAccessStream implements RandomAccessStream {
     public void close() throws IOException {
         if (!closed.compareAndSet(false, true)) {
             return;
+        }
+
+        if (callback != null) {
+            callback.streamClosed(file.length() - fileInitialLength);
         }
 
         writeMetadataExecutor.submit(() -> {

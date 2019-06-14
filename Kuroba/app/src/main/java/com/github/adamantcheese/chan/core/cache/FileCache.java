@@ -47,7 +47,6 @@ public class FileCache implements FileCacheDownloader.Callback {
     private final ExecutorService downloadPool = Executors.newFixedThreadPool(DOWNLOAD_POOL_SIZE);
     protected OkHttpClient httpClient;
 
-    private final CacheHandler cacheHandler;
     private final PartialCacheHandler partialCacheHandler;
 
     private HashMap<String, RandomAccessStreamViewCreator<CacheBackedRandomAccessStream>> openCacheBackedStreams = new HashMap<>();
@@ -62,7 +61,6 @@ public class FileCache implements FileCacheDownloader.Callback {
                 .protocols(Collections.singletonList(Protocol.HTTP_1_1))
                 .build();
 
-        cacheHandler = new CacheHandler(directory);
         partialCacheHandler = new PartialCacheHandler(directory);
     }
 
@@ -71,7 +69,7 @@ public class FileCache implements FileCacheDownloader.Callback {
             downloader.cancel();
         }
 
-        cacheHandler.clearCache();
+        partialCacheHandler.clearCache();
     }
 
     /**
@@ -93,21 +91,16 @@ public class FileCache implements FileCacheDownloader.Callback {
             return downloader;
         }
 
-        try {
-            RandomAccessStreamViewCreator.RandomAccessStreamView view = getCacheBackedStream(url);
-            FileCacheDownloader downloader = FileCacheDownloader.fromCallbackStream(this, view);
-            downloader.addListener(listener);
-            downloader.execute(downloadPool);
-            downloaders.put(url, downloader);
+        RandomAccessStreamViewCreator.RandomAccessStreamView view = getCacheBackedStream(url);
+        FileCacheDownloader downloader = FileCacheDownloader.fromCallbackStream(this, view);
+        downloader.addListener(listener);
+        downloader.execute(downloadPool);
+        downloaders.put(url, downloader);
 
-            return downloader;
-        } catch (IOException e) {
-            Logger.e(TAG, "downloadFile: ", e);
-            return null;
-        }
+        return downloader;
     }
 
-    public FileCacheDataSource createDataSource(String url) throws IOException {
+    public FileCacheDataSource createDataSource(String url) {
         FileCacheDataSource dataSource = new FileCacheDataSource(getCacheBackedStream(url));
 
         if (downloaders.containsKey(url)) {
@@ -117,7 +110,7 @@ public class FileCache implements FileCacheDownloader.Callback {
         return dataSource;
     }
 
-    public RandomAccessStreamViewCreator<CacheBackedRandomAccessStream>.RandomAccessStreamView getCacheBackedStream(String url) throws IOException {
+    public RandomAccessStreamViewCreator<CacheBackedRandomAccessStream>.RandomAccessStreamView getCacheBackedStream(String url) {
         if (!openCacheBackedStreams.containsKey(url)
             || openCacheBackedStreams.get(url).isClosed()) {
             final LazyRandomAccessStream lazyReplicatedHttpStream = new LazyRandomAccessStream(
@@ -147,14 +140,10 @@ public class FileCache implements FileCacheDownloader.Callback {
     }
 
     public boolean exists(String key) {
-        return cacheHandler.exists(key);
-    }
-
-    public File get(String key) {
-        return cacheHandler.get(key);
+        return partialCacheHandler.exists(key);
     }
 
     public long getFileCacheSize() {
-        return cacheHandler.getSize().get();
+        return partialCacheHandler.getSize().get();
     }
 }
